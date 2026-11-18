@@ -1,25 +1,22 @@
-JARVIS V3 - PAGINA WEB CORREGIDA Y DIAGNOSTICO
+JARVIS v3.1 - CORRECCIÓN DE SINCRONIZACIÓN
 
-Este paquete contiene los archivos de la web que enviaste, con ajustes:
-- Siempre muestra Encendido/Apagado segun estado de Firebase.
-- La orden sin confirmar aparece por separado.
-- Indica persistentemente cuando la lectura /reles es rechazada.
-- Deshabilita interruptores cuando no existe una lectura valida.
+FIRMWARE (PRIMERO)
+1. Haz copia de seguridad de D:\esp\xiaozhi-esp32\main\boards\common\jarvis_firebase.cc
+2. Copia SOLO firmware/main/boards/common/jarvis_firebase.cc a esa ruta.
+3. No modifiques CMakeLists.txt, la placa, la OLED, el programador ni jarvis_private.h.
+4. En la terminal ya configurada: idf.py build
+5. Si compila: idf.py -p COM7 flash. Posteriormente prueba con el shield y cargas de red desconectadas.
 
-INSTRUCCIONES
-1. Haz respaldo de los archivos de tu repositorio.
-2. Sube index.html, style.css, script.js y firebase-config.js
-   a la RAIZ de tu repositorio de GitHub Pages, reemplazando las versiones anteriores.
-3. Verifica que se llame EXACTAMENTE firebase-config.js, sin (1).
-4. Abre la web y fuerza actualización con Ctrl+Shift+R.
-5. Debajo de los ocho relés lee el mensaje de diagnóstico.
-6. Si dice error permission_denied, revisa los UID y reglas del administrador.
-7. Si hay lectura correcta y se muestra orden web por confirmar,
-   la falta de confirmación está en la sincronización ESP32-Firebase,
-   NO en la lectura de la web.
+WEB (DESPUÉS DE VERIFICAR EL FIRMWARE)
+1. En el repositorio existente de GitHub Pages, reemplaza index.html, script.js y style.css por los de web_GitHub_Pages.
+2. Conserva TU firebase-config.js ya correcto. NO está incluido aquí.
+3. Confirma los cambios, espera el despliegue de Pages y abre el sitio en incógnito.
+4. Cuando no se reciba un latido reciente (90 s), los estados pasan a «Último estado» y se bloquean los botones de órdenes.
 
-No subir credenciales del ESP32 ni contraseñas al repositorio.
-La configuración pública de Firebase Web incluida no contiene contraseñas.
-
-Nota: este ajuste no modifica firmware ni fuerza que el ESP32
-confirme órdenes; se requiere diagnóstico del firmware si persisten pendientes.
+ALCANCE
+- Una sola solicitud REST PATCH actualiza estados/confirmaciones de hasta ocho canales.
+- Intervalo entre solicitudes exitosas mucho menor; no hay 15 s de penalización cuando no hay nada pendiente.
+- Prioriza el control por voz: no realiza solicitudes de Firebase mientras XiaoZhi no está en reposo.
+- WiFi y servidor XiaoZhi siguen siendo dependencias separadas, la actualización no soluciona una red inestable.
+- No compilado en el equipo del usuario ni probado en su ESP32 real; sintaxis verificada con stubs.
+- Sin cargas eléctricas de 110/220 V durante pruebas.
