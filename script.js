@@ -26,9 +26,15 @@ function setOnline(connected) {
   box.querySelector('span').textContent = connected ? 'ESP32 conectado' : 'ESP32 sin conexión';
 }
 function updateConnectionStatus() {
-  const last = Number(deviceConnection?.ultimaConexion || 0);
+  const relayTimes = Object.values(dataRelays || {})
+    .map(item => Number(item?.ultimaConexion || 0))
+    .filter(Number.isFinite);
+  const relayLast = relayTimes.length ? Math.max(...relayTimes) : 0;
+  const deviceLast = Number(deviceConnection?.ultimaConexion || 0);
+  const last = Math.max(deviceLast, relayLast);
   const age = Date.now() - last;
-  const online = deviceConnection?.conectado === true && last > 0 && age >= 0 && age < 180000;
+  const online = last > 0 && age >= 0 && age < 180000 &&
+    (deviceConnection?.conectado === true || relayLast > 0);
   setOnline(online);
   $('deviceStatus').textContent = online ? 'Conectado' : 'Desconectado';
 }
@@ -40,12 +46,20 @@ function relayState(data) {
   return null;
 }
 function relayIsPending(data) {
-  const current = relayState(data);
-  if (current === null) return true;
-  // Una orden web queda pendiente hasta que la confirme el ESP32.
-  if (typeof data?.solicitud === 'string' && data.solicitud !== data.confirmacion) return true;
-  return false;
+  // La confirmación de una orden web NO sustituye el estado físico.
+  return typeof data?.solicitud === 'string' &&
+         data.solicitud.length > 0 &&
+         data.solicitud !== data.confirmacion;
 }
+let relaysLoaded = false;
+let relaysReadError = '';
+function setRelayDataStatus(message, isError = false) {
+  const status = $('relayDataStatus');
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle('error', isError);
+}
+
 function newRequestId() {
   return 'web_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
 }
@@ -64,25 +78,43 @@ function renderRelays() {
     const toggle = document.createElement('button'); toggle.className = 'switch'; toggle.type = 'button';
     toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-label', `Cambiar relé ${index}`);
     toggle.setAttribute('aria-checked', String(state === true));
+    toggle.disabled = !relaysLoaded || Boolean(relaysReadError) || state === null;
+    toggle.title = toggle.disabled ? 'Sin estado confirmado de Firebase' : `Cambiar relé ${index}`;
     toggle.onclick = () => changeRelay(index, !(state === true));
     top.append(ico,toggle);
     const name = document.createElement('h3'); name.textContent = `Relé ${index}`;
     const meta = document.createElement('div'); meta.className = 'relay-meta';
     const nameState = document.createElement('span'); nameState.textContent = 'CANAL ' + String(index).padStart(2,'0');
-    const status = document.createElement('span'); status.className = 'state' + (pending ? ' pending' : (state === true ? ' on' : ''));
-    status.textContent = pending ? 'Por confirmar' : (state ? 'Encendido' : 'Apagado');
+    const status = document.createElement('span');
+    status.className = 'state' + (state === true ? ' on' : '');
+    status.textContent = state === null ? 'Sin datos' : (state ? 'Encendido' : 'Apagado');
     meta.append(nameState,status);
-    container.append(top,name,meta); grid.append(container);
+    container.append(top,name,meta);
+    if (pending) {
+      const confirmation = document.createElement('div');
+      confirmation.className = 'pending-note';
+      confirmation.textContent = 'Orden web por confirmar';
+      container.append(confirmation);
+    }
+    grid.append(container);
   }
   $('activeCount').innerHTML = `${enabled} <span>/ 8</span>`;
 }
 async function changeRelay(index, value) {
+  if (!relaysLoaded || relaysReadError || relayState(dataRelays[`rele${index}`]) === null) {
+    toast('No hay lectura válida del relé en Firebase. Revisa el mensaje de diagnóstico.');
+    return;
+  }
   try {
     await update(ref(database,`reles/rele${index}`), { orden: value, solicitud: newRequestId() });
     toast(`Orden enviada al relé ${index}. Esperando confirmación física.`);
   } catch (error) { toast('No se pudo enviar la orden: ' + error.message); }
 }
 async function changeAll(value) {
+  if (!relaysLoaded || relaysReadError) {
+    toast('Primero debe recibirse correctamente la información de Firebase.');
+    return;
+  }
   const changes = {};
   for (let i = 1; i <= relayCount; i++) {
     changes[`reles/rele${i}/orden`] = value;
@@ -138,16 +170,44 @@ function renderHistory() {
   }
 }
 function watch(path, callback, constraint) {
-  const dbref=constraint ? query(ref(database,path),limitToLast(constraint)) : ref(database,path);
-  offListeners.push(onValue(dbref,snap=>callback(snap.val()),error=>toast('Acceso a Firebase: '+error.message)));
+  const dbref = constraint ? query(ref(database, path), limitToLast(constraint)) : ref(database, path);
+  offListeners.push(onValue(dbref, snap => callback(snap.val()), error => {
+    console.error(`[Jarvis] Falló la lectura de /${path}`, error);
+    if (path === 'reles') {
+      relaysLoaded = false;
+      relaysReadError = error.code || error.message || 'error desconocido';
+      dataRelays = {};
+      setRelayDataStatus(`ERROR al leer /reles: ${relaysReadError}. Comprueba el UID del administrador y las reglas de Realtime Database.`, true);
+      renderRelays();
+    }
+    toast(`Error Firebase /${path}: ${error.code || error.message}`);
+  }));
 }
 function watchData() {
-  watch('reles',v=>{dataRelays=v||{};renderRelays()});
-  watch('dispositivo',v=>{deviceConnection=v||{};updateConnectionStatus()});
-  watch('programaciones',v=>{dataSchedules=v||{};renderSchedules()});
-  watch('historial',v=>{dataHistory=v||{};renderHistory()},200);
+  watch('reles', v => {
+    relaysLoaded = true;
+    relaysReadError = '';
+    dataRelays = v || {};
+    const count = Object.keys(dataRelays).filter(key => /^rele[1-8]$/.test(key)).length;
+    setRelayDataStatus(count > 0
+      ? `Lectura de Firebase correcta: ${count} relé(s) encontrados en /reles.`
+      : 'Firebase respondió, pero la ruta /reles no tiene registros.');
+    renderRelays();
+    updateConnectionStatus();
+  });
+  watch('dispositivo', v => {deviceConnection = v || {}; updateConnectionStatus();});
+  watch('programaciones', v => {dataSchedules = v || {}; renderSchedules();});
+  watch('historial', v => {dataHistory = v || {}; renderHistory();}, 200);
 }
-function resetData(){offListeners.forEach(off=>off());offListeners=[];dataRelays={};dataSchedules={};dataHistory={};deviceConnection={};setOnline(false);}
+function resetData() {
+  offListeners.forEach(off => off());
+  offListeners = [];
+  dataRelays = {}; dataSchedules = {}; dataHistory = {}; deviceConnection = {};
+  relaysLoaded = false; relaysReadError = '';
+  setOnline(false);
+  setRelayDataStatus('Esperando respuesta de Firebase para /reles…');
+  renderRelays();
+}
 
 $('loginForm').onsubmit=async(e)=>{e.preventDefault();$('loginFeedback').textContent='';try{await signInWithEmailAndPassword(auth,$('email').value.trim(),$('password').value)}catch(error){$('loginFeedback').textContent='No se pudo iniciar sesión. Revisa el correo, la contraseña y los permisos.';console.error(error.code)}};
 $('logout').onclick=()=>signOut(auth).catch(e=>toast(e.message));

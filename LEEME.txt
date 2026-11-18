@@ -1,0 +1,25 @@
+JARVIS V3 - PAGINA WEB CORREGIDA Y DIAGNOSTICO
+
+Este paquete contiene los archivos de la web que enviaste, con ajustes:
+- Siempre muestra Encendido/Apagado segun estado de Firebase.
+- La orden sin confirmar aparece por separado.
+- Indica persistentemente cuando la lectura /reles es rechazada.
+- Deshabilita interruptores cuando no existe una lectura valida.
+
+INSTRUCCIONES
+1. Haz respaldo de los archivos de tu repositorio.
+2. Sube index.html, style.css, script.js y firebase-config.js
+   a la RAIZ de tu repositorio de GitHub Pages, reemplazando las versiones anteriores.
+3. Verifica que se llame EXACTAMENTE firebase-config.js, sin (1).
+4. Abre la web y fuerza actualización con Ctrl+Shift+R.
+5. Debajo de los ocho relés lee el mensaje de diagnóstico.
+6. Si dice error permission_denied, revisa los UID y reglas del administrador.
+7. Si hay lectura correcta y se muestra orden web por confirmar,
+   la falta de confirmación está en la sincronización ESP32-Firebase,
+   NO en la lectura de la web.
+
+No subir credenciales del ESP32 ni contraseñas al repositorio.
+La configuración pública de Firebase Web incluida no contiene contraseñas.
+
+Nota: este ajuste no modifica firmware ni fuerza que el ESP32
+confirme órdenes; se requiere diagnóstico del firmware si persisten pendientes.
