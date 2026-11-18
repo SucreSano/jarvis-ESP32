@@ -1,0 +1,41 @@
+JARVIS ESP32 V3 - WEB PARA GITHUB PAGES
+======================================
+
+IMPORTANTE: este ZIP NO contiene tu firebase-config.js real para no
+sobrescribir el archivo que ya completaste con tus datos de Firebase.
+
+PREPARAR PARA PUBLICAR
+1. Extrae este ZIP en el disco D.
+2. COPIA tu archivo YA CONFIGURADO firebase-config.js de tu carpeta
+   web_jarvis anterior a la carpeta extraida, junto a index.html.
+3. Comprueba que esten juntos en la carpeta principal:
+   index.html
+   style.css
+   script.js
+   firebase-config.js
+   .nojekyll (opcional)
+4. No subas firebase-config.EJEMPLO.js ni INSTRUCCIONES_PUBLICACION.txt
+   si no los necesitas. NUNCA subas jarvis_private.h, contrasenas,
+   tokens de Firebase, ni firmware de ESP32. La configuracion publica
+   de la aplicacion Firebase web (apiKey, appId, etc.) no debe incluir
+   credenciales de inicio de sesion.
+
+PUBLICAR EN GITHUB PAGES
+5. En GitHub, abre o crea un repositorio para Jarvis.
+6. En la raiz del repositorio, sube directamente los cuatro archivos
+   anteriores (y .nojekyll opcional), NO una carpeta web_jarvis anidada.
+7. En Settings > Pages > Build and deployment elige
+   Source: Deploy from a branch; Branch: main; Folder: /(root).
+8. En Firebase Console > Authentication > Settings > Authorized domains,
+   agrega el dominio de GitHub Pages (por ejemplo sucresano.github.io),
+   si aun no esta autorizado. Activa el metodo Email/Password si hace falta.
+
+FUNCIONAMIENTO
+- Los 8 interruptores envian orden y solicitud a Firebase.
+- El panel presenta estado y confirmacion enviados por el ESP32.
+- Los horarios semanales y temporizadores se guardan en /programaciones.
+- La sincronizacion fisica depende de que Jarvis v3 compile, arranque,
+  se autentique y ejecute los comandos. No es prueba de relés solo publicar.
+- La pagina no necesita Firebase Hosting; usa GitHub Pages + Firebase RTDB.
+
+VERSION: Jarvis web v3 extraida del paquete integral ya entregado.
