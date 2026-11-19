@@ -15,6 +15,10 @@ let dataHistory = {};
 let deviceConnection = {};
 let offListeners = [];
 let toastHandle;
+let databaseOnline = false;
+let clockOffset = null;
+const serverNow = () => Date.now() + (clockOffset ?? 0);
+const sessionReady = () => /^\d+-\d+$/.test(deviceConnection.sesion || '');
 
 function toast(message) {
   const el = $('toast'); el.textContent = message; el.classList.add('visible');
@@ -23,7 +27,7 @@ function toast(message) {
 function setOnline(connected) {
   const box = $('connectionStatus');
   box.classList.toggle('connected', connected);
-  box.querySelector('span').textContent = connected ? 'ESP32 conectado' : 'ESP32 sin conexión';
+  box.querySelector('span').textContent = connected ? 'ESP32 comunicado' : !databaseOnline ? 'Panel sin conexión a Firebase' : !deviceLastSeen() ? 'Esperando al ESP32' : 'ESP32 sin señal reciente';
 }
 function deviceLastSeen() {
   const relayTimes = Object.values(dataRelays || {})
@@ -34,14 +38,14 @@ function deviceLastSeen() {
 }
 function isDeviceOnline() {
   const last = deviceLastSeen();
-  const age = Date.now() - last;
+  const age = serverNow() - last;
   // Latido nominal firmware v3.1: ~25 s. Margen para WiFi irregular.
-  return last > 0 && age >= 0 && age < 90000;
+  return databaseOnline && clockOffset !== null && last > 0 && age >= -5000 && age < 90000;
 }
 function updateConnectionStatus() {
   const online = isDeviceOnline();
   setOnline(online);
-  $('deviceStatus').textContent = online ? 'Conectado' : 'Sin conexión';
+  $('deviceStatus').textContent = online ? (sessionReady() ? 'Disponible' : 'Esperando firmware 3.2') : (deviceLastSeen() ? 'Último contacto · ' + humanDate(deviceLastSeen()) : 'Sin contacto registrado');
   // La falta de conexión no convierte el último estado conocido en "apagado".
   renderRelays();
 }
@@ -53,10 +57,11 @@ function relayState(data) {
   return null;
 }
 function relayIsPending(data) {
-  // La confirmación de una orden web NO sustituye el estado físico.
-  return typeof data?.solicitud === 'string' &&
-         data.solicitud.length > 0 &&
-         data.solicitud !== data.confirmacion;
+  if (!data?.solicitud || data.solicitud === data.confirmacion) return false;
+  const [version, session, issued] = String(data.solicitud).split('_');
+  const age = serverNow() - Number(issued);
+  return version === 'j32' && session === deviceConnection.sesion &&
+         Number.isFinite(age) && age >= -5000 && age < 30000;
 }
 let relaysLoaded = false;
 let relaysReadError = '';
@@ -68,7 +73,7 @@ function setRelayDataStatus(message, isError = false) {
 }
 
 function newRequestId() {
-  return 'web_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+  return 'j32_' + deviceConnection.sesion + '_' + Math.round(serverNow()) + '_' + Math.random().toString(36).slice(2, 10);
 }
 function renderRelays() {
   const grid = $('relayGrid'); grid.replaceChildren();
@@ -86,7 +91,7 @@ function renderRelays() {
     const toggle = document.createElement('button'); toggle.className = 'switch'; toggle.type = 'button';
     toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-label', `Cambiar relé ${index}`);
     toggle.setAttribute('aria-checked', String(state === true));
-    toggle.disabled = !online || !relaysLoaded || Boolean(relaysReadError) || state === null || pending;
+    toggle.disabled = !online || !sessionReady() || !relaysLoaded || Boolean(relaysReadError) || state === null || pending;
     toggle.title = !online ? 'ESP32 sin conexión: último estado conocido' :
       (toggle.disabled ? 'Orden pendiente o lectura no disponible' : `Cambiar relé ${index}`);
     toggle.onclick = () => changeRelay(index, !(state === true));
@@ -101,20 +106,25 @@ function renderRelays() {
                  (state ? 'Encendido' : 'Apagado'));
     meta.append(nameState,status);
     container.append(top,name,meta);
-    if (pending) {
+    if (item.solicitud && item.solicitud !== item.confirmacion) {
       const confirmation = document.createElement('div');
       confirmation.className = 'pending-note';
-      confirmation.textContent = 'Orden web por confirmar';
+      confirmation.textContent = pending ? 'Esperando confirmación' : 'Orden anterior sin confirmar. Puedes volver a enviarla.';
       container.append(confirmation);
     }
     grid.append(container);
   }
   $('activeCount').innerHTML = `${enabled} <span>/ 8${online ? '' : ' (última lectura)'}</span>`;
-  $('allOn').disabled = !online || !relaysLoaded || Boolean(relaysReadError);
-  $('allOff').disabled = !online || !relaysLoaded || Boolean(relaysReadError);
+  $('allOn').disabled = !groupReady();
+  $('allOff').disabled = !groupReady();
+}
+function groupReady() {
+  return isDeviceOnline() && sessionReady() && relaysLoaded && !relaysReadError &&
+    Array.from({length:relayCount}, (_,i) => dataRelays['rele'+(i+1)])
+      .every(r => relayState(r) !== null && !relayIsPending(r));
 }
 async function changeRelay(index, value) {
-  if (!isDeviceOnline() || !relaysLoaded || relaysReadError ||
+  if (!isDeviceOnline() || !sessionReady() || !relaysLoaded || relaysReadError ||
       relayIsPending(dataRelays[`rele${index}`]) ||
       relayState(dataRelays[`rele${index}`]) === null) {
     toast('ESP32 sin conexión, orden pendiente o lectura no válida.');
@@ -122,11 +132,11 @@ async function changeRelay(index, value) {
   }
   try {
     await update(ref(database,`reles/rele${index}`), { orden: value, solicitud: newRequestId() });
-    toast(`Orden enviada al relé ${index}. Esperando confirmación física.`);
+    toast(`Orden enviada al relé ${index}. Esperando confirmación del ESP32.`);
   } catch (error) { toast('No se pudo enviar la orden: ' + error.message); }
 }
 async function changeAll(value) {
-  if (!isDeviceOnline() || !relaysLoaded || relaysReadError) {
+  if (!groupReady()) {
     toast('ESP32 sin conexión o lectura de Firebase no válida.');
     return;
   }
@@ -199,6 +209,8 @@ function watch(path, callback, constraint) {
   }));
 }
 function watchData() {
+  watch('.info/connected', v => {databaseOnline = v === true; updateConnectionStatus();});
+  watch('.info/serverTimeOffset', v => {clockOffset = typeof v === 'number' ? v : null; updateConnectionStatus();});
   watch('reles', v => {
     relaysLoaded = true;
     relaysReadError = '';
@@ -216,12 +228,12 @@ function watchData() {
 }
 function resetData() {
   offListeners.forEach(off => off());
-  offListeners = [];
+  offListeners = []; databaseOnline = false; clockOffset = null;
   dataRelays = {}; dataSchedules = {}; dataHistory = {}; deviceConnection = {};
   relaysLoaded = false; relaysReadError = '';
   setOnline(false);
   setRelayDataStatus('Esperando respuesta de Firebase para /reles…');
-  renderRelays();
+  updateConnectionStatus(); renderSchedules(); renderHistory();
 }
 
 $('loginForm').onsubmit=async(e)=>{e.preventDefault();$('loginFeedback').textContent='';try{await signInWithEmailAndPassword(auth,$('email').value.trim(),$('password').value)}catch(error){$('loginFeedback').textContent='No se pudo iniciar sesión. Revisa el correo, la contraseña y los permisos.';console.error(error.code)}};
